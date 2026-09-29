@@ -7,10 +7,22 @@
  * Objek `*_CHANNELS` bertipe Record<Channel, true> sehingga compiler memaksa daftar
  * whitelist di preload selalu lengkap & sinkron dengan kontrak.
  */
+import type { ChunkMeta } from './audio'
 import type { AppInfo } from './types'
+
+export interface SaveChunkRequest {
+  sessionId: string
+  meta: ChunkMeta
+  /** PCM Int16 little-endian, 16 kHz mono. */
+  pcm: ArrayBuffer
+}
 
 export interface IpcInvokeContract {
   'app:get-info': () => AppInfo
+  /** Debug: simpan chunk sebagai .wav di Documents/LiveScribe/debug-chunks/<sesi>/. Mengembalikan path. */
+  'debug:save-chunk': (req: SaveChunkRequest) => string
+  /** Debug: buka folder chunk (sesi tertentu atau folder induk) di Explorer. */
+  'debug:open-chunk-folder': (sessionId?: string) => void
 }
 
 /** Diisi mulai tahap 3 (status engine, segmen transkrip, progress download). */
@@ -24,7 +36,9 @@ export type InvokeResult<C extends InvokeChannel> = Awaited<ReturnType<IpcInvoke
 export type EventPayload<C extends EventChannel> = IpcEventContract[C]
 
 export const INVOKE_CHANNELS: Record<InvokeChannel, true> = {
-  'app:get-info': true
+  'app:get-info': true,
+  'debug:save-chunk': true,
+  'debug:open-chunk-folder': true
 }
 
 export const EVENT_CHANNELS: Record<EventChannel, true> = {}

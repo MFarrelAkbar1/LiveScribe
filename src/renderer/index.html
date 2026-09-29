@@ -42,9 +42,23 @@
       <section id="transcript" class="transcript" aria-live="polite">
         <p class="placeholder">Transkrip akan muncul di sini.</p>
       </section>
+
+      <details id="debug" class="debug" open>
+        <summary>Debug pipeline audio</summary>
+        <div class="debug-controls">
+          <label class="switch">
+            <input id="save-wav" type="checkbox" />
+            <span>Simpan chunk ke .wav</span>
+          </label>
+          <button id="open-chunks" type="button">Buka folder chunk</button>
+          <span id="chunk-stats" class="chunk-stats"></span>
+        </div>
+        <ol id="chunk-log" class="chunk-log"></ol>
+      </details>
     </main>
 
     <footer id="footer" class="footer"></footer>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

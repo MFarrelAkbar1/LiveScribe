@@ -1,5 +1,8 @@
-import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { mkdir } from 'node:fs/promises'
 import type { InvokeArgs, InvokeChannel, InvokeResult } from '@shared/ipc'
+import { saveDebugChunk } from './debug-chunks'
+import { debugChunksDir, SESSION_ID_PATTERN } from './paths'
 import { isAppUrl } from './security'
 
 type Handler<C extends InvokeChannel> = (
@@ -23,4 +26,13 @@ export function registerIpcHandlers(): void {
     electron: process.versions.electron,
     platform: process.platform
   }))
+
+  handle('debug:save-chunk', (_event, req) => saveDebugChunk(req))
+
+  handle('debug:open-chunk-folder', async (_event, sessionId) => {
+    const dir = debugChunksDir(sessionId && SESSION_ID_PATTERN.test(sessionId) ? sessionId : undefined)
+    await mkdir(dir, { recursive: true })
+    const error = await shell.openPath(dir)
+    if (error) throw new Error(error)
+  })
 }

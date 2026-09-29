@@ -3,17 +3,22 @@ import type { AudioSourceKind } from '@shared/types'
 /**
  * Graf audio untuk capture:
  *
- *   system (loopback) ─► MediaStreamSource ─► Analyser ─┐
- *                                                        ├─► mixBus ─► sink (gain 0) ─► destination
- *   mic (opsional)    ─► MediaStreamSource ─► Analyser ─┘
+ *   system (loopback) ─► MediaStreamSource ─► Analyser ─► bus[system] ─┐
+ *                                                                        ├─► mixBus ─► sink (gain 0) ─► destination
+ *   mic (opsional)    ─► MediaStreamSource ─► Analyser ─► bus[mic]    ─┘
  *
- * Setiap sumber punya node sendiri (`getSourceNode`) sehingga mode "separate"
- * (label Saya/Sistem) cukup menyambungkan pipeline PCM ke node per-sumber,
- * bukan ke mixBus.
+ * AudioPipeline menambahkan cabang mixBus (atau bus[kind]) ─► PCM worklet ─► sink.
  *
- * `sink` wajib ada: Chromium hanya memproses node yang (akhirnya) ditarik oleh
- * `destination`. AnalyserNode yang punya output tidak lagi di-pull otomatis, sehingga
- * tanpa sink semua sampel bernilai 0. Gain 0 → tidak ada suara yang keluar / feedback.
+ * - `bus[kind]` bersifat permanen selama sesi: saat perangkat berganti, hanya rantai
+ *   MediaStreamSource→Analyser yang diganti. Pipeline yang tersambung ke bus (mode
+ *   "separate") atau ke mixBus (mode "mix") tidak perlu disambung ulang.
+ * - `sink` wajib ada: Chromium hanya memproses node yang (akhirnya) ditarik oleh
+ *   `destination`. AnalyserNode yang punya output tidak lagi di-pull otomatis, sehingga
+ *   tanpa sink semua sampel bernilai 0. Gain 0 → tidak ada suara yang keluar / feedback.
+ *
+ * Perangkat default dipantau (event `devicechange`). Jika output default berganti
+ * (colok/lepas headphone, Bluetooth), loopback di-restart otomatis ke perangkat baru;
+ * begitu juga mic jika input default berganti. Track yang mati sendiri dicoba ulang.
  */
 
 export interface LevelReading {
@@ -22,6 +27,12 @@ export interface LevelReading {
   /** Puncak absolut dalam dBFS. */
   peakDb: number
 }
+
+export type CaptureEvent =
+  | { type: 'reconnecting'; source: AudioSourceKind }
+  | { type: 'device-switched'; source: AudioSourceKind; device: string | null }
+  /** Gagal pulih; capture tetap berjalan (hening) dan dicoba lagi saat ada perubahan perangkat. */
+  | { type: 'source-lost'; source: AudioSourceKind; message: string }
 
 export class CaptureError extends Error {
   constructor(
@@ -41,7 +52,16 @@ interface SourceChain {
   buffer: Float32Array<ArrayBuffer>
 }
 
+interface DefaultDevices {
+  output: string | null
+  input: string | null
+}
+
+const DEVICE_CHANGE_DEBOUNCE_MS = 600
+const RETRY_DELAYS_MS = [500, 1500, 3000]
+
 const toDb = (x: number): number => (x > 0 ? 20 * Math.log10(x) : -Infinity)
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 export class AudioCapture {
   readonly ctx: AudioContext
@@ -49,16 +69,24 @@ export class AudioCapture {
   readonly mixBus: GainNode
   /** Node bisu yang tersambung ke destination; semua cabang yang harus diproses berakhir di sini. */
   readonly sink: GainNode
-  /** Dipanggil jika track berhenti sendiri (device dicabut, dll). */
-  onSourceEnded: ((kind: AudioSourceKind) => void) | null = null
+  onEvent: ((event: CaptureEvent) => void) | null = null
 
+  private readonly buses: Record<AudioSourceKind, GainNode>
   private readonly sources = new Map<AudioSourceKind, SourceChain>()
+  /** Sumber yang diminta aktif (termasuk yang sedang terputus & menunggu pulih). */
+  private readonly wanted = new Set<AudioSourceKind>()
+  private readonly restarting = new Map<AudioSourceKind, Promise<void>>()
+  private defaults: DefaultDevices = { output: null, input: null }
+  private deviceTimer: ReturnType<typeof setTimeout> | undefined
   private closed = false
 
   private constructor() {
     this.ctx = new AudioContext({ latencyHint: 'interactive' })
     this.mixBus = new GainNode(this.ctx, { gain: 1 })
     this.sink = new GainNode(this.ctx, { gain: 0 })
+    this.buses = { system: new GainNode(this.ctx), mic: new GainNode(this.ctx) }
+    this.buses.system.connect(this.mixBus)
+    this.buses.mic.connect(this.mixBus)
     this.mixBus.connect(this.sink)
     this.sink.connect(this.ctx.destination)
   }
@@ -68,7 +96,10 @@ export class AudioCapture {
     const capture = new AudioCapture()
     try {
       await capture.ctx.resume()
-      await capture.addSource('system', await getSystemAudioStream())
+      capture.defaults = await readDefaultDevices()
+      capture.addSource('system', await getSystemAudioStream())
+      capture.wanted.add('system')
+      navigator.mediaDevices.addEventListener('devicechange', capture.onDeviceChange)
       return capture
     } catch (err) {
       await capture.stop()
@@ -78,26 +109,28 @@ export class AudioCapture {
 
   /** Nyalakan/matikan mikrofon saat capture berjalan. */
   async setMicEnabled(enabled: boolean): Promise<void> {
-    if (enabled === this.sources.has('mic')) return
     if (!enabled) {
+      this.wanted.delete('mic')
       this.removeSource('mic')
       return
     }
+    if (this.wanted.has('mic')) return
     const stream = await getMicStream()
     if (this.closed) {
       stopStream(stream)
       return
     }
-    await this.addSource('mic', stream)
+    this.wanted.add('mic')
+    this.addSource('mic', stream)
   }
 
   hasSource(kind: AudioSourceKind): boolean {
     return this.sources.has(kind)
   }
 
-  /** Node per-sumber, untuk mode "separate". */
-  getSourceNode(kind: AudioSourceKind): AudioNode | null {
-    return this.sources.get(kind)?.analyser ?? null
+  /** Bus per-sumber yang stabil selama sesi — titik sambung pipeline untuk mode "separate". */
+  getSourceBus(kind: AudioSourceKind): AudioNode {
+    return this.buses[kind]
   }
 
   getLevel(kind: AudioSourceKind): LevelReading | null {
@@ -119,28 +152,78 @@ export class AudioCapture {
   async stop(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    clearTimeout(this.deviceTimer)
+    navigator.mediaDevices.removeEventListener('devicechange', this.onDeviceChange)
+    this.wanted.clear()
     for (const kind of [...this.sources.keys()]) this.removeSource(kind)
     this.mixBus.disconnect()
     this.sink.disconnect()
     await this.ctx.close().catch(() => undefined)
   }
 
-  private async addSource(kind: AudioSourceKind, stream: MediaStream): Promise<void> {
+  private readonly onDeviceChange = (): void => {
+    clearTimeout(this.deviceTimer)
+    this.deviceTimer = setTimeout(() => void this.checkDefaults(), DEVICE_CHANGE_DEBOUNCE_MS)
+  }
+
+  private async checkDefaults(): Promise<void> {
+    if (this.closed) return
+    const next = await readDefaultDevices()
+    const prev = this.defaults
+    this.defaults = next
+    for (const kind of this.wanted) {
+      const changed = kind === 'system' ? next.output !== prev.output : next.input !== prev.input
+      // Sumber yang sempat hilang juga dicoba lagi pada setiap perubahan perangkat.
+      if (changed || !this.sources.has(kind)) void this.restart(kind)
+    }
+  }
+
+  /** Ganti rantai sumber dengan stream baru di perangkat default saat ini (dengan retry). */
+  private restart(kind: AudioSourceKind): Promise<void> {
+    const running = this.restarting.get(kind)
+    if (running) return running
+    const task = (async () => {
+      this.onEvent?.({ type: 'reconnecting', source: kind })
+      let lastError: unknown
+      for (const wait of [0, ...RETRY_DELAYS_MS]) {
+        if (wait) await delay(wait)
+        if (this.closed || !this.wanted.has(kind)) return
+        try {
+          const stream = kind === 'system' ? await getSystemAudioStream() : await getMicStream()
+          if (this.closed || !this.wanted.has(kind)) {
+            stopStream(stream)
+            return
+          }
+          this.removeSource(kind)
+          this.addSource(kind, stream)
+          const device = kind === 'system' ? this.defaults.output : this.defaults.input
+          this.onEvent?.({ type: 'device-switched', source: kind, device })
+          return
+        } catch (err) {
+          lastError = err
+        }
+      }
+      this.removeSource(kind)
+      this.onEvent?.({
+        type: 'source-lost',
+        source: kind,
+        message: lastError instanceof Error ? lastError.message : String(lastError)
+      })
+    })().finally(() => this.restarting.delete(kind))
+    this.restarting.set(kind, task)
+    return task
+  }
+
+  private addSource(kind: AudioSourceKind, stream: MediaStream): void {
     const node = new MediaStreamAudioSourceNode(this.ctx, { mediaStream: stream })
     const analyser = new AnalyserNode(this.ctx, { fftSize: 2048, smoothingTimeConstant: 0 })
     node.connect(analyser)
-    analyser.connect(this.mixBus)
-    this.sources.set(kind, {
-      stream,
-      node,
-      analyser,
-      buffer: new Float32Array(analyser.fftSize)
-    })
+    analyser.connect(this.buses[kind])
+    this.sources.set(kind, { stream, node, analyser, buffer: new Float32Array(analyser.fftSize) })
     for (const track of stream.getAudioTracks()) {
+      // `ended` hanya terpicu jika track mati bukan karena kita (device dicabut, driver reset).
       track.addEventListener('ended', () => {
-        if (this.sources.get(kind)?.stream !== stream) return
-        this.removeSource(kind)
-        this.onSourceEnded?.(kind)
+        if (this.sources.get(kind)?.stream === stream) void this.restart(kind)
       })
     }
   }
@@ -157,6 +240,20 @@ export class AudioCapture {
 
 function stopStream(stream: MediaStream): void {
   for (const track of stream.getTracks()) track.stop()
+}
+
+/** Nama perangkat default Windows ("Default - Headphone (Realtek)" → "Headphone (Realtek)"). */
+async function readDefaultDevices(): Promise<DefaultDevices> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const label = (kind: MediaDeviceKind): string | null => {
+      const d = devices.find((x) => x.kind === kind && x.deviceId === 'default')
+      return d ? d.label.replace(/^Default\s*-\s*/i, '') || 'default' : null
+    }
+    return { output: label('audiooutput'), input: label('audioinput') }
+  } catch {
+    return { output: null, input: null }
+  }
 }
 
 async function getSystemAudioStream(): Promise<MediaStream> {

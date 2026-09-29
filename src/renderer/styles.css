@@ -192,3 +192,81 @@ button.primary.stop {
   color: var(--muted);
   border-top: 1px solid var(--border);
 }
+
+.debug {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 14px;
+  max-height: 38vh;
+  display: flex;
+  flex-direction: column;
+}
+.debug summary {
+  cursor: pointer;
+  color: var(--muted);
+  user-select: none;
+}
+.debug[open] summary {
+  margin-bottom: 8px;
+}
+.debug-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.debug-controls button {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.chunk-stats {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.chunk-log {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+.chunk-log li {
+  display: grid;
+  grid-template-columns: 52px 64px 52px 150px 56px 72px 1fr;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.chunk-log li.dropped {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  max-width: 360px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #262a32;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+  transition:
+    opacity 0.3s,
+    transform 0.3s;
+}
+.toast.leaving {
+  opacity: 0;
+  transform: translateY(6px);
+}
