@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+    />
+    <title>LiveScribe</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>LiveScribe</h1>
+      <span id="status" class="pill" data-state="idle">Siap</span>
+    </header>
+
+    <main>
+      <section class="controls">
+        <button id="toggle" class="primary" type="button">Start</button>
+        <label class="switch">
+          <input id="mic" type="checkbox" />
+          <span>Ikutkan mikrofon</span>
+        </label>
+      </section>
+
+      <section class="meters">
+        <div class="meter" id="meter-system">
+          <span class="meter-label">Sistem</span>
+          <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+          <span class="meter-value">—</span>
+        </div>
+        <div class="meter" id="meter-mic">
+          <span class="meter-label">Saya (mic)</span>
+          <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+          <span class="meter-value">—</span>
+        </div>
+      </section>
+
+      <div id="notice" class="notice" role="status" hidden></div>
+
+      <section id="transcript" class="transcript" aria-live="polite">
+        <p class="placeholder">Transkrip akan muncul di sini.</p>
+      </section>
+    </main>
+
+    <footer id="footer" class="footer"></footer>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+*.tsbuildinfo
+
+# Rahasia — API key disimpan via safeStorage di userData, bukan di repo
+.env
+.env.*
+
+# Binary & model hasil unduhan (disimpan di %APPDATA%/LiveScribe, jaga-jaga)
+bin/
+models/
+*.bin
