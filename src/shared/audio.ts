@@ -14,9 +14,9 @@ export const PCM_SAMPLE_RATE = 16_000
 export type StreamId = 'mix' | AudioSourceKind
 
 export type ChunkCutReason =
-  /** Dipotong di jeda bicara â€” tidak perlu overlap. */
+  /** Dipotong di jeda bicara — tidak perlu overlap. */
   | 'pause'
-  /** Mencapai durasi maksimum â€” dipotong di titik paling senyap, dengan overlap. */
+  /** Mencapai durasi maksimum — dipotong di titik paling senyap, dengan overlap. */
   | 'max-length'
   /** Capture dihentikan. */
   | 'flush'
@@ -66,12 +66,12 @@ export const DEFAULT_CHUNKER_CONFIG: ChunkerConfig = {
   minChunkRmsDb: -48
 }
 
-/** Metadata chunk (tanpa PCM) â€” dipakai untuk log, debug, dan dedup overlap di tahap 3. */
+/** Metadata chunk (tanpa PCM) — dipakai untuk log, debug, dan dedup overlap di tahap 3. */
 export interface ChunkMeta {
   stream: StreamId
   /** Nomor urut per aliran, mulai 1. */
   seq: number
-  /** Posisi awal chunk (ms sejak capture dimulai) â€” dasar timestamp transkrip/SRT. */
+  /** Posisi awal chunk (ms sejak capture dimulai) — dasar timestamp transkrip/SRT. */
   startMs: number
   durationMs: number
   /** Berapa ms di awal chunk ini yang juga ada di akhir chunk sebelumnya (0 jika dipotong di jeda). */

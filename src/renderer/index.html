@@ -13,6 +13,7 @@
     <header class="topbar">
       <h1>LiveScribe</h1>
       <span id="status" class="pill" data-state="idle">Siap</span>
+      <span id="engine-badge" class="pill engine-badge" data-device="none" title="Engine transkripsi">Engine: —</span>
     </header>
 
     <main>
@@ -22,6 +23,23 @@
           <input id="mic" type="checkbox" />
           <span>Ikutkan mikrofon</span>
         </label>
+        <label class="field">
+          <span>Bahasa</span>
+          <select id="language">
+            <option value="id">Indonesia</option>
+            <option value="en">English</option>
+            <option value="auto">Auto</option>
+          </select>
+        </label>
+      </section>
+
+      <section id="engine" class="engine" data-state="checking">
+        <div class="engine-row">
+          <span id="engine-text" class="engine-text">Memeriksa engine…</span>
+          <button id="engine-action" type="button" hidden></button>
+        </div>
+        <div id="engine-progress" class="progress" hidden><div class="progress-fill"></div></div>
+        <div id="engine-detail" class="engine-detail"></div>
       </section>
 
       <section class="meters">
@@ -41,6 +59,7 @@
 
       <section id="transcript" class="transcript" aria-live="polite">
         <p class="placeholder">Transkrip akan muncul di sini.</p>
+        <ol id="transcript-list" class="transcript-list"></ol>
       </section>
 
       <details id="debug" class="debug" open>
@@ -52,6 +71,7 @@
           </label>
           <button id="open-chunks" type="button">Buka folder chunk</button>
           <span id="chunk-stats" class="chunk-stats"></span>
+          <span id="stt-stats" class="chunk-stats"></span>
         </div>
         <ol id="chunk-log" class="chunk-log"></ol>
       </details>

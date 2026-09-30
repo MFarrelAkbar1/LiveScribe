@@ -8,6 +8,7 @@
  * whitelist di preload selalu lengkap & sinkron dengan kontrak.
  */
 import type { ChunkMeta } from './audio'
+import type { EngineStatus, TranscribeRequest, TranscribeResult } from './stt'
 import type { AppInfo } from './types'
 
 export interface SaveChunkRequest {
@@ -23,10 +24,17 @@ export interface IpcInvokeContract {
   'debug:save-chunk': (req: SaveChunkRequest) => string
   /** Debug: buka folder chunk (sesi tertentu atau folder induk) di Explorer. */
   'debug:open-chunk-folder': (sessionId?: string) => void
+  'stt:get-status': () => EngineStatus
+  /** Transkripsikan satu chunk. Diproses berurutan (FIFO) oleh engine. */
+  'stt:transcribe': (req: TranscribeRequest) => TranscribeResult
+  /** Ulangi persiapan engine (setelah error atau download dibatalkan). */
+  'stt:retry': () => void
+  'stt:cancel-download': () => void
 }
 
-/** Diisi mulai tahap 3 (status engine, segmen transkrip, progress download). */
-export interface IpcEventContract {}
+export interface IpcEventContract {
+  'stt:status': EngineStatus
+}
 
 export type InvokeChannel = keyof IpcInvokeContract
 export type EventChannel = keyof IpcEventContract
@@ -38,10 +46,16 @@ export type EventPayload<C extends EventChannel> = IpcEventContract[C]
 export const INVOKE_CHANNELS: Record<InvokeChannel, true> = {
   'app:get-info': true,
   'debug:save-chunk': true,
-  'debug:open-chunk-folder': true
+  'debug:open-chunk-folder': true,
+  'stt:get-status': true,
+  'stt:transcribe': true,
+  'stt:retry': true,
+  'stt:cancel-download': true
 }
 
-export const EVENT_CHANNELS: Record<EventChannel, true> = {}
+export const EVENT_CHANNELS: Record<EventChannel, true> = {
+  'stt:status': true
+}
 
 /** API yang diekspos preload ke `window.api`. */
 export interface LiveScribeApi {

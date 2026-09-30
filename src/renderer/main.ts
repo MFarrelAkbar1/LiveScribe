@@ -1,11 +1,16 @@
 import { DEFAULT_CHUNKER_CONFIG, type ChunkMeta } from '@shared/audio'
 import { sessionIdFromDate } from '@shared/format'
+import type { FilterReason, TranscribeResult } from '@shared/stt'
+import type { Language } from '@shared/types'
 import { AudioCapture, CaptureError, type CaptureEvent } from './audio/capture'
 import { floatToInt16 } from './audio/dsp/pcm'
 import { AudioPipeline } from './audio/pipeline'
 import { ChunkLog } from './ui/chunk-log'
+import { EnginePanel } from './ui/engine-panel'
+import { LatencyStats } from './ui/latency-stats'
 import { LevelMeter } from './ui/level-meter'
 import { Toaster } from './ui/toast'
+import { TranscriptView } from './ui/transcript-view'
 
 type RunState = 'idle' | 'starting' | 'running' | 'stopping'
 
@@ -14,11 +19,23 @@ const SILENCE_DB = -70
 /** Lama hening sebelum muncul peringatan "tidak ada audio". */
 const SILENCE_WARN_MS = 8000
 const STATS_INTERVAL_MS = 250
+const LANGUAGE_KEY = 'livescribe.language'
+
+const FILTER_LABEL: Record<FilterReason, string> = {
+  'non-speech': 'bukan ucapan',
+  blocklist: 'frasa halusinasi',
+  'weak-phrase': 'frasa meragukan',
+  'no-speech-prob': 'tanpa ucapan',
+  repetition: 'pengulangan',
+  'prompt-echo': 'gema prompt',
+  duplicate: 'duplikat overlap'
+}
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 
 const toggleBtn = $<HTMLButtonElement>('toggle')
 const micCheckbox = $<HTMLInputElement>('mic')
+const languageSelect = $<HTMLSelectElement>('language')
 const saveWavCheckbox = $<HTMLInputElement>('save-wav')
 const openChunksBtn = $<HTMLButtonElement>('open-chunks')
 const statusPill = $('status')
@@ -30,6 +47,13 @@ const meters = {
 }
 const chunkLog = new ChunkLog($('chunk-log'), $('chunk-stats'))
 const toaster = new Toaster($('toasts'))
+const enginePanel = new EnginePanel($('engine'), $('engine-badge'))
+const transcript = new TranscriptView(
+  $('transcript'),
+  $('transcript-list'),
+  $('transcript').querySelector('.placeholder') as HTMLElement
+)
+const latency = new LatencyStats($('stt-stats'))
 
 let state: RunState = 'idle'
 let capture: AudioCapture | null = null
@@ -88,6 +112,8 @@ async function start(): Promise<void> {
   sessionId = id
   saveErrorShown = false
   chunkLog.reset()
+  transcript.reset()
+  latency.reset()
   setState('running')
   lastSoundAt = performance.now()
   if (micCheckbox.checked) await applyMic(true)
@@ -114,9 +140,9 @@ async function stop(): Promise<void> {
 
 function onChunk(id: string, meta: ChunkMeta, pcm: Float32Array): void {
   chunkLog.addChunk(meta)
-  // Tahap 3: chunk dikirim ke engine transkripsi di sini.
-  if (!saveWavCheckbox.checked) return
   const pcm16 = floatToInt16(pcm)
+  transcribe(id, meta, pcm16.buffer)
+  if (!saveWavCheckbox.checked) return
   window.api
     .invoke('debug:save-chunk', { sessionId: id, meta, pcm: pcm16.buffer })
     .then(() => chunkLog.markSaved())
@@ -126,6 +152,38 @@ function onChunk(id: string, meta: ChunkMeta, pcm: Float32Array): void {
       saveErrorShown = true
     })
 }
+
+function transcribe(id: string, meta: ChunkMeta, pcm: ArrayBuffer): void {
+  const sentAt = performance.now()
+  latency.begin()
+  window.api
+    .invoke('stt:transcribe', { sessionId: id, meta, pcm, language: languageSelect.value as Language })
+    .then((res) => {
+      const e2eMs = performance.now() - sentAt
+      latency.record(e2eMs, res.inferenceMs)
+      chunkLog.setOutcome(meta, describeOutcome(res, e2eMs), {
+        title: res.filtered.map((f) => `${FILTER_LABEL[f.reason]}: ${f.text}`).join('\n')
+      })
+      if (id !== sessionId) return // hasil sesi lama yang datang terlambat
+      transcript.add(res.segments)
+      if (res.amended) transcript.amend(res.amended.id, res.amended.text)
+    })
+    .catch((err: unknown) => {
+      latency.fail()
+      chunkLog.setOutcome(meta, `gagal: ${ipcErrorMessage(err)}`, { failed: true })
+    })
+}
+
+function describeOutcome(res: TranscribeResult, e2eMs: number): string {
+  const parts = [`${Math.round(e2eMs)} ms`, `${res.segments.length} segmen`]
+  const reasons = new Set(res.filtered.map((f) => FILTER_LABEL[f.reason]))
+  if (reasons.size) parts.push(`dibuang: ${[...reasons].join(', ')}`)
+  return parts.join(' · ')
+}
+
+/** "Error invoking remote method 'x': Error: pesan" → "pesan" */
+const ipcErrorMessage = (err: unknown): string =>
+  (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/, '')
 
 function onCaptureEvent(event: CaptureEvent): void {
   const label = event.source === 'mic' ? 'Mikrofon' : 'Audio sistem'
@@ -194,6 +252,27 @@ toggleBtn.addEventListener('click', () => {
 micCheckbox.addEventListener('change', () => {
   if (state === 'running') void applyMic(micCheckbox.checked)
 })
+
+languageSelect.addEventListener('change', () => {
+  try {
+    localStorage.setItem(LANGUAGE_KEY, languageSelect.value)
+  } catch {
+    // penyimpanan tidak tersedia — pilihan hanya berlaku sesi ini
+  }
+})
+
+enginePanel.onAction = (action) => {
+  void window.api.invoke(action === 'cancel' ? 'stt:cancel-download' : 'stt:retry')
+}
+window.api.on('stt:status', (status) => enginePanel.render(status))
+void window.api.invoke('stt:get-status').then((status) => enginePanel.render(status))
+
+try {
+  const saved = localStorage.getItem(LANGUAGE_KEY)
+  if (saved === 'id' || saved === 'en' || saved === 'auto') languageSelect.value = saved
+} catch {
+  // abaikan
+}
 
 openChunksBtn.addEventListener('click', () => {
   window.api.invoke('debug:open-chunk-folder', sessionId ?? undefined).catch((err: unknown) => {

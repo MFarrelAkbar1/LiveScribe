@@ -22,6 +22,8 @@ export class ChunkLog {
   private sent = 0
   private dropped = 0
   private saved = 0
+  /** Sel hasil transkripsi per chunk yang masih tampil (kunci: stream#seq). */
+  private readonly outcomeCells = new Map<string, HTMLElement>()
 
   constructor(
     private readonly list: HTMLElement,
@@ -30,6 +32,7 @@ export class ChunkLog {
 
   reset(): void {
     this.sent = this.dropped = this.saved = 0
+    this.outcomeCells.clear()
     this.list.replaceChildren()
     this.renderStats(null)
   }
@@ -46,6 +49,16 @@ export class ChunkLog {
 
   markSaved(): void {
     this.saved++
+  }
+
+  /** Tampilkan hasil transkripsi chunk di kolom terakhir baris (latensi, jumlah segmen, error). */
+  setOutcome(meta: ChunkMeta, text: string, opts: { failed?: boolean; title?: string } = {}): void {
+    const cell = this.outcomeCells.get(key(meta))
+    if (!cell) return
+    cell.textContent = text
+    cell.title = opts.title ?? ''
+    cell.classList.remove('pending')
+    cell.classList.toggle('failed', Boolean(opts.failed))
   }
 
   renderStats(noiseFloorDb: number | null): void {
@@ -68,12 +81,21 @@ export class ChunkLog {
       `suara ${speechPct}%`,
       drop ? DROP_LABEL[drop] : ''
     ]
+    let last: HTMLElement | null = null
     for (const text of cells) {
-      const span = document.createElement('span')
-      span.textContent = text
-      li.append(span)
+      last = document.createElement('span')
+      last.textContent = text
+      li.append(last)
+    }
+    if (!drop && last) {
+      last.textContent = 'menunggu engine…'
+      last.classList.add('pending')
+      this.outcomeCells.set(key(meta), last)
     }
     this.list.prepend(li)
     while (this.list.childElementCount > MAX_ROWS) this.list.lastElementChild?.remove()
+    if (this.outcomeCells.size > MAX_ROWS) this.outcomeCells.delete(this.outcomeCells.keys().next().value!)
   }
 }
+
+const key = (meta: ChunkMeta): string => `${meta.stream}#${meta.seq}`

@@ -1,9 +1,10 @@
-import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { mkdir } from 'node:fs/promises'
-import type { InvokeArgs, InvokeChannel, InvokeResult } from '@shared/ipc'
+import type { EventChannel, EventPayload, InvokeArgs, InvokeChannel, InvokeResult } from '@shared/ipc'
 import { saveDebugChunk } from './debug-chunks'
 import { debugChunksDir, SESSION_ID_PATTERN } from './paths'
 import { isAppUrl } from './security'
+import type { SttEngine } from './stt/engine'
 
 type Handler<C extends InvokeChannel> = (
   event: IpcMainInvokeEvent,
@@ -20,7 +21,14 @@ function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void 
   })
 }
 
-export function registerIpcHandlers(): void {
+/** Kirim event ter-typing ke semua jendela. */
+export function broadcast<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
+
+export function registerIpcHandlers(engine: SttEngine): void {
   handle('app:get-info', () => ({
     version: app.getVersion(),
     electron: process.versions.electron,
@@ -35,4 +43,11 @@ export function registerIpcHandlers(): void {
     const error = await shell.openPath(dir)
     if (error) throw new Error(error)
   })
+
+  handle('stt:get-status', () => engine.getStatus())
+  handle('stt:transcribe', (_event, req) => engine.transcribe(req))
+  handle('stt:retry', () => {
+    void engine.start()
+  })
+  handle('stt:cancel-download', () => engine.cancelDownload())
 }
